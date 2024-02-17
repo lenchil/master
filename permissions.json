@@ -1,0 +1,42 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "iot:Publish",
+        "iot:Receive",
+        "iot:PublishRetain"
+      ],
+      "Resource": [
+        "arn:aws:iot:eu-north-1:264894456007:topic/sdk/test/java",
+        "arn:aws:iot:eu-north-1:264894456007:topic/sdk/test/python",
+        "arn:aws:iot:eu-north-1:264894456007:topic/sdk/test/js",
+        "arn:aws:iot:eu-north-1:264894456007:bastion/port",
+        "arn:aws:iot:eu-north-1:264894456007:message_topic"
+      ]
+    },
+    {
+      "Effect": "Allow",
+      "Action": "iot:Subscribe",
+      "Resource": [
+        "arn:aws:iot:eu-north-1:264894456007:topicfilter/sdk/test/java",
+        "arn:aws:iot:eu-north-1:264894456007:topicfilter/sdk/test/python",
+        "arn:aws:iot:eu-north-1:264894456007:topicfilter/sdk/test/js",
+        "arn:aws:iot:eu-north-1:264894456007:topicfilter/bastion/port",
+        "arn:aws:iot:eu-north-1:264894456007:topicfilter/message_topic"
+      ]
+    },
+    {
+      "Effect": "Allow",
+      "Action": "iot:Connect",
+      "Resource": [
+        "arn:aws:iot:eu-north-1:264894456007:client/sdk-java",
+        "arn:aws:iot:eu-north-1:264894456007:client/basicPubSub",
+        "arn:aws:iot:eu-north-1:264894456007:client/sdk-nodejs-*",
+        "arn:aws:iot:eu-north-1:264894456007:bastion/port",
+        "arn:aws:iot:eu-north-1:264894456007:message_topic"
+      ]
+    }
+  ]
+}
