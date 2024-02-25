@@ -9,10 +9,16 @@ import subprocess
 import getpass
 import os
 import time
+import queue
+import select
+import subprocess
+import re  # Import the 're' module for regular expression matching
+client_topic = "client/tunnel"
 cmdData = CommandLineUtils.parse_sample_input_pubsub()
 received_count = 0
 received_all_event = threading.Event()
 
+port_condition = threading.Condition()
 def on_connection_interrupted(connection, error, **kwargs):
     print("Connection interrupted. error: {}".format(error))
 
@@ -24,6 +30,9 @@ def on_connection_resumed(connection, return_code, session_present, **kwargs):
         resubscribe_future, _ = connection.resubscribe_existing_topics()
 
         resubscribe_future.add_done_callback(on_resubscribe_complete)
+# Callback when a connection has been disconnected or shutdown successfully
+def on_connection_closed(connection, callback_data):
+    print("Connection closed")
 
 def on_resubscribe_complete(resubscribe_future):
     resubscribe_results = resubscribe_future.result()
@@ -43,10 +52,36 @@ def get_pi_id():
         print("Pi ID file not found.")
         return None
 
-# Create an event to wait for the port
-port_event = threading.Event()
+def check_tunnel_status():
+    tunnel_host = "localhost"
+    tunnel_port = 22
 
+    try:
+        result = subprocess.run(["nc", "-z", "-v", "-w", "5", tunnel_host, str(tunnel_port)], capture_output=True, text=True)
+        if result.returncode == 0:
+            pi_id = get_pi_id() 
+
+            print("Tunnel is ready to be used.")
+            message_data = {
+                 'port': bastion_port,
+                 'pi_id': pi_id
+                }
+            payload = json.dumps(message_data)
+
+            print("sending port to client '{}'...".format(client_topic))
+            mqtt_connection.publish(
+                topic=client_topic,
+                payload=payload,
+                qos=mqtt.QoS.AT_LEAST_ONCE
+            )
+        else:
+            print("Tunnel is not ready.")
+    except Exception as e:
+        print("Error checking tunnel status:", str(e))
+        
 def on_message_received(topic, payload, dup, qos, retain, **kwargs):
+    threading.Thread(target= handle_message, args=((topic, payload, dup, qos, retain))).start()
+def handle_message(topic, payload, dup, qos, retain):
     print("Received message from topic '{}': {}".format(topic, payload))
     
     try:
@@ -58,22 +93,37 @@ def on_message_received(topic, payload, dup, qos, retain, **kwargs):
         if stored_pi_id is None:
             print("Pi ID not found.")
             return
-            
+
         if pi_id == stored_pi_id:
             if command == 'Tunnel':
                 print("Initiating reverse SSH tunnel request for Pi {}...".format(pi_id))
-                # Add the SSH tunnel command for the specific Pi here
-                subprocess.run(["ssh", "-R", f'{port}:localhost:22', '-i', 'ssh_test.pem' "pi@127.0.0.1"])
-                
-                # Wait for the port to be provided by the bastion host
-                print("Waiting for port from bastion host...")
-                port_event.wait()
-                print("Received port from bastion host!")
-                
-                # Continue with the rest of the logic
-                # ...
-                
+                with port_condition:
+                    time.sleep(0.1) 
+                    print("port condition waitin")
+                    port_condition.wait()  # Wait for the condition to be notified
+                    print(bastion_port)
+                if bastion_port is None:
+                    print("Did not receive port from bastion host.")
+                    return
+                print("Executing tunnel command")
+                ssh_command = "ssh -N -R " f'{bastion_port}' ":localhost:22 -i ssh_test.pem ubuntu@ec2-13-49-245-100.eu-north-1.compute.amazonaws.com -o StrictHostKeyChecking=no"
+                print(ssh_command)
+                try:
+                   
+                    # Execute SSH command
+                    ssh_process = subprocess.Popen(
+                        ssh_command,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        universal_newlines=True,  # Use universal_newlines for text mode
+                        shell=True
+                    )
+                    
+                    check_tunnel_status()
+                except Exception as e:
+                    print("Error executing SSH command:", str(e))        
             else:
+
                 print("Invalid command.")
         else:
             print("Pi ID does not match the stored Pi ID.")
@@ -85,32 +135,34 @@ def on_message_received(topic, payload, dup, qos, retain, **kwargs):
     received_count += 1
     if received_count == cmdData.input_count:
         received_all_event.set()
-
-# Function to set the port provided by the bastion host
-def set_bastion_port(port):
-    # Set the port and notify the waiting thread
-    cmdData.input_port = port
-    port_event.set()
-
+ 
 def on_connection_success(connection, callback_data):
     assert isinstance(callback_data, mqtt.OnConnectionSuccessData)
     print("Connection Successful with return code: {} session present: {}".format(callback_data.return_code, callback_data.session_present))
     
-    # Subscribe to the topic where the bastion host will provide the port
-    bastion_topic = "bastion/port"
-    print("Subscribing to topic '{}'...".format(bastion_topic))
-    subscribe_future, packet_id = mqtt_connection.subscribe(
-        topic=bastion_topic,
-        qos=mqtt.QoS.AT_LEAST_ONCE,
-        callback=on_bastion_port_received)
-
-    subscribe_result = subscribe_future.result()
-    print("Subscribed with {}".format(str(subscribe_result['qos'])))
-
 def on_bastion_port_received(topic, payload, dup, qos, retain, **kwargs):
+    threading.Thread(target=handle_bastion_port, args=(topic, payload, dup, qos, retain)).start()
+def handle_bastion_port(topic, payload, dup, qos, retain):
     print("Received port from bastion host: {}".format(payload))
-    set_bastion_port(payload)
+    global bastion_port
+    try:
+        message_data = json.loads(payload.decode())  # Decode payload to string before parsing as JSON
+        with port_condition:
+            bastion_port = message_data.get('port')
+            port_condition.notify()
+            print("port condition")  # Notify the waiting thread
+    except json.JSONDecodeError as e:
+        print("Error decoding JSON payload: {}".format(e))
 
+
+# Callback when a connection attempt fails
+def on_connection_failure(connection, callback_data):
+    assert isinstance(callback_data, mqtt.OnConnectionFailureData)
+    print("Connection failed with error code: {}".format(callback_data.error))
+
+# Callback when a connection has been disconnected or shutdown successfully
+def on_connection_closed(connection, callback_data):
+    print("Connection closed")
 if __name__ == '__main__':
     proxy_options = None
     if cmdData.input_proxy_host is not None and cmdData.input_proxy_port != 0:
@@ -144,6 +196,7 @@ if __name__ == '__main__':
     print("Connected!")
 
     message_topic = cmdData.input_topic
+    bastion_topic = "bastion/port"
 
     print("Subscribing to topic '{}'...".format(message_topic))
     subscribe_future, packet_id = mqtt_connection.subscribe(
@@ -153,11 +206,21 @@ if __name__ == '__main__':
 
     subscribe_result = subscribe_future.result()
     print("Subscribed with {}".format(str(subscribe_result['qos'])))
+    #Subscribe to the topic where the bastion host will provide the port
+
+    print("Subscribing to topic '{}'...".format(bastion_topic))
+    subscribe_future, packet_id = mqtt_connection.subscribe(
+        topic=bastion_topic,
+        qos=mqtt.QoS.AT_LEAST_ONCE,
+        callback=on_bastion_port_received)
+
+    subscribe_result = subscribe_future.result()
+    print("Subscribed with {}".format(str(subscribe_result['qos'])))
 
     # Wait for all messages to be received.
     if not received_all_event.is_set():
         print("Waiting for messages...")
-
+    
     received_all_event.wait()
     print("{} message(s) received.".format(received_count))
 
@@ -166,4 +229,3 @@ if __name__ == '__main__':
     disconnect_future = mqtt_connection.disconnect()
     disconnect_future.result()
     print("Disconnected!")
-
