@@ -17,6 +17,7 @@ client_topic = "client/tunnel"
 cmdData = CommandLineUtils.parse_sample_input_pubsub()
 received_count = 0
 received_all_event = threading.Event()
+bastion_address = "ubuntu@ec2-34-241-140-26.eu-west-1.compute.amazonaws.com"
 
 port_condition = threading.Condition()
 def on_connection_interrupted(connection, error, **kwargs):
@@ -43,7 +44,7 @@ def on_resubscribe_complete(resubscribe_future):
             sys.exit("Server rejected resubscribe to topic: {}".format(topic))
 
 def get_pi_id():
-    pi_id_file = "/home/lennard/master/pi_id.txt"  # Replace with the actual path to your pi_id.txt file
+    pi_id_file = "/home/pi/pi_id.txt"  # Replace with the actual path to your pi_id.txt file
     if os.path.exists(pi_id_file):
         with open(pi_id_file, "r") as file:
             pi_id = file.read().strip()
@@ -106,7 +107,7 @@ def handle_message(topic, payload, dup, qos, retain):
                     print("Did not receive port from bastion host.")
                     return
                 print("Executing tunnel command")
-                ssh_command = "ssh -N -R " f'{bastion_port}' ":localhost:22 -i ssh_test.pem ubuntu@ec2-13-49-245-100.eu-north-1.compute.amazonaws.com -o StrictHostKeyChecking=no"
+                ssh_command = "ssh -N -R " f'{bastion_port}' ":localhost:22 -i Bastion_key.pem " f'{bastion_address}' " -o StrictHostKeyChecking=no ExitOnForwardFailure=yes"
                 print(ssh_command)
                 try:
                    
