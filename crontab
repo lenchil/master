@@ -1,0 +1,2 @@
+@reboot sleep 60 && /home/pi/start.sh
+* * * * * /home/pi/monitor_ssh_tunnel.sh > /dev/null 2>&1
