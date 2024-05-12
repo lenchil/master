@@ -68,4 +68,4 @@ fi
 
 # run pub/sub sample app using certificates downloaded in package
 printf "\nRunning pub/sub sample application...\n"
-python3 aws-iot-device-sdk-python-v2/samples/test.py --endpoint a117fwqfuse8es-ats.iot.eu-north-1.amazonaws.com --ca_file root-CA.crt --cert test_vm.cert.pem --key test_vm.private.key --client_id message_topic --topic message_topic  --count 0 --message test
+python3 /home/pi/master/aws-iot-device-sdk-python-v2/samples/test.py --endpoint a117fwqfuse8es-ats.iot.eu-north-1.amazonaws.com --ca_file root-CA.crt --cert test_vm.cert.pem --key test_vm.private.key --client_id message_topic --topic message_topic  --count 0 --message test
