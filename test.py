@@ -17,6 +17,7 @@ client_topic = "client/tunnel"
 cmdData = CommandLineUtils.parse_sample_input_pubsub()
 received_count = 0
 received_all_event = threading.Event()
+bastion_address = "ubuntu@ec2-34-241-140-26.eu-west-1.compute.amazonaws.com"
 
 port_condition = threading.Condition()
 def on_connection_interrupted(connection, error, **kwargs):
@@ -43,7 +44,7 @@ def on_resubscribe_complete(resubscribe_future):
             sys.exit("Server rejected resubscribe to topic: {}".format(topic))
 
 def get_pi_id():
-    pi_id_file = "/home/lennard/master/pi_id.txt"  # Replace with the actual path to your pi_id.txt file
+    pi_id_file = "/home/pi/pi_id.txt"
     if os.path.exists(pi_id_file):
         with open(pi_id_file, "r") as file:
             pi_id = file.read().strip()
@@ -59,7 +60,7 @@ def check_tunnel_status():
     try:
         result = subprocess.run(["nc", "-z", "-v", "-w", "5", tunnel_host, str(tunnel_port)], capture_output=True, text=True)
         if result.returncode == 0:
-            pi_id = get_pi_id() 
+            pi_id = get_pi_id()
 
             print("Tunnel is ready to be used.")
             message_data = {
@@ -78,17 +79,17 @@ def check_tunnel_status():
             print("Tunnel is not ready.")
     except Exception as e:
         print("Error checking tunnel status:", str(e))
-        
+
 def on_message_received(topic, payload, dup, qos, retain, **kwargs):
     threading.Thread(target= handle_message, args=((topic, payload, dup, qos, retain))).start()
 def handle_message(topic, payload, dup, qos, retain):
     print("Received message from topic '{}': {}".format(topic, payload))
-    
+
     try:
         message_data = json.loads(payload)
         command = message_data.get('command')
         pi_id = message_data.get('pi_id')  # Unique identifier for each Pi
-        
+
         stored_pi_id = get_pi_id()
         if stored_pi_id is None:
             print("Pi ID not found.")
@@ -98,7 +99,7 @@ def handle_message(topic, payload, dup, qos, retain):
             if command == 'Tunnel':
                 print("Initiating reverse SSH tunnel request for Pi {}...".format(pi_id))
                 with port_condition:
-                    time.sleep(0.1) 
+                    time.sleep(0.1)
                     print("port condition waitin")
                     port_condition.wait()  # Wait for the condition to be notified
                     print(bastion_port)
@@ -106,10 +107,10 @@ def handle_message(topic, payload, dup, qos, retain):
                     print("Did not receive port from bastion host.")
                     return
                 print("Executing tunnel command")
-                ssh_command = "ssh -N -R " f'{bastion_port}' ":localhost:22 -i ssh_test.pem ubuntu@ec2-13-49-245-100.eu-north-1.compute.amazonaws.com -o StrictHostKeyChecking=no -o ExitOnForwardFailure=yes"
+                ssh_command = "ssh -N -R " f'{bastion_port}' ":localhost:22 -i Bastion_key.pem " f'{bastion_address}' " -o StrictHostKeyChecking=no ExitOnForwardFailure=yes"
                 print(ssh_command)
                 try:
-                   
+
                     # Execute SSH command
                     ssh_process = subprocess.Popen(
                         ssh_command,
@@ -118,28 +119,28 @@ def handle_message(topic, payload, dup, qos, retain):
                         universal_newlines=True,  # Use universal_newlines for text mode
                         shell=True
                     )
-                    
+
                     check_tunnel_status()
                 except Exception as e:
-                    print("Error executing SSH command:", str(e))        
+                    print("Error executing SSH command:", str(e))
             else:
 
                 print("Invalid command.")
         else:
             print("Pi ID does not match the stored Pi ID.")
-            
+
     except json.JSONDecodeError as e:
         print("Error decoding JSON payload: {}".format(e))
-    
+
     global received_count
     received_count += 1
     if received_count == cmdData.input_count:
         received_all_event.set()
- 
+
 def on_connection_success(connection, callback_data):
     assert isinstance(callback_data, mqtt.OnConnectionSuccessData)
     print("Connection Successful with return code: {} session present: {}".format(callback_data.return_code, callback_data.session_present))
-    
+
 def on_bastion_port_received(topic, payload, dup, qos, retain, **kwargs):
     threading.Thread(target=handle_bastion_port, args=(topic, payload, dup, qos, retain)).start()
 def handle_bastion_port(topic, payload, dup, qos, retain):
@@ -195,7 +196,7 @@ if __name__ == '__main__':
     connect_future.result()
     print("Connected!")
 
-    message_topic = cmdData.input_topic
+    message_topic = "pi/1"
     bastion_topic = "bastion/port"
 
     print("Subscribing to topic '{}'...".format(message_topic))
@@ -220,7 +221,7 @@ if __name__ == '__main__':
     # Wait for all messages to be received.
     if not received_all_event.is_set():
         print("Waiting for messages...")
-    
+
     received_all_event.wait()
     print("{} message(s) received.".format(received_count))
 
