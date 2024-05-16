@@ -8,12 +8,15 @@ import threading
 import time
 import json
 from utils.command_line_utils import CommandLineUtils
-
+import os
+host = "127.0.0.1"
+pi_id = 0
+key_path = r"C:\Users\Lenna\Documents\Bastion_key.pem"
 cmdData = CommandLineUtils.parse_sample_input_pubsub()
 received_count = 0
 received_all_event = threading.Event()
 def on_connection_resumed(connection, return_code, session_present, **kwargs):
-    print("Connection resumed. return_code: {} session_present: {}".format(return_code, session_present))
+    #print("Connection resumed. return_code: {} session_present: {}".format(return_code, session_present))
 
     if return_code == mqtt.ConnectReturnCode.ACCEPTED and not session_present:
         print("Session did not persist. Resubscribing to existing topics...")
@@ -24,6 +27,7 @@ def on_connection_resumed(connection, return_code, session_present, **kwargs):
 def on_connection_closed(connection, callback_data):
     print("Connection closed")
 
+
 def on_resubscribe_complete(resubscribe_future):
     resubscribe_results = resubscribe_future.result()
     print("Resubscribe results: {}".format(resubscribe_results))
@@ -33,25 +37,65 @@ def on_resubscribe_complete(resubscribe_future):
             sys.exit("Server rejected resubscribe to topic: {}".format(topic))
 def on_connection_success(connection, callback_data):
     assert isinstance(callback_data, mqtt.OnConnectionSuccessData)
-    print("Connection Successful with return code: {} session present: {}".format(callback_data.return_code, callback_data.session_present))
+    #print("Connection Successful with return code: {} session present: {}".format(callback_data.return_code, callback_data.session_present))
     
 def on_connection_interrupted(connection, error, **kwargs):
-    print("Connection interrupted. error: {}".format(error))
+    return
 
-def request_tunnel(command, pi_id): 
+
+def request_tunnel(command, pi_id, user, password): 
     message_data = {
         'command': command,
         'pi_id': pi_id
-        }
+    }
     payload = json.dumps(message_data)
-
-    print("Sending tunnel request to topic '{}'...".format(message_topic))
+    pi_topic = "pi/"+ pi_id
+    print("Sending tunnel request to topic '{}'...".format(pi_topic))
     mqtt_connection.publish(
-        topic=message_topic,
+        topic=pi_topic,
         payload=payload,
         qos=mqtt.QoS.AT_LEAST_ONCE
     )
+    message_data = {
+        'command': command,
+        'pi_id': pi_id,
+        'user' : user,
+        'password': password 
+    }
+    payload = json.dumps(message_data)
+    print("Sending tunnel request to bastion")
+    mqtt_connection.publish(
+        topic="message_topic/bastion",
+        payload=payload,
+        qos=mqtt.QoS.AT_LEAST_ONCE
+        )
+    
+def on_message_received(topic, payload, dup, qos, retain, **kwargs):
+    message_data = json.loads(payload.decode('utf-8'))
+    received_pi_id = message_data.get('pi_id')
+    received_ssh_port = message_data.get('port')
 
+    # Check if the received pi_id matches the expected pi_id
+    if received_pi_id == pi_id:
+        # Store the received SSH port for later connection
+        ssh_port = received_ssh_port
+        run_ssh_command(host , ssh_port)
+
+def run_ssh_command(host, port):
+    try:
+        command = f'start cmd /c ssh pi@{host} -o ProxyCommand="ssh -W %h:%p ubuntu@ec2-34-241-140-26.eu-west-1.compute.amazonaws.com" -p {port} -v'
+        result = subprocess.run(command, shell=True)
+        if result == 0:
+            print("SSH command executed successfully.")
+            return True
+        else:
+            return False
+    except Exception as e:
+        print("An error occurred while executing the SSH command:", e)
+    
+
+    
+        
 # Callback when a connection attempt fails
 def on_connection_failure(connection, callback_data):
     assert isinstance(callback_data, mqtt.OnConnectionFailureData)
@@ -89,17 +133,21 @@ if __name__ == '__main__':
     connect_future = mqtt_connection.connect()
 
     connect_future.result()
-    print("Connected!")
-    message_topic = cmdData.input_topic
-
-    # Set the desired port, SSH key path, and SSH host
-    ssh_key_path = 'path/to/ssh_key.pem'
+    print("Connected!") 
+    tunnel_topic = cmdData.input_topic
+    print("Subscribing to topic '{}'...".format(tunnel_topic))
+    subscribe_future, packet_id = mqtt_connection.subscribe(
+        topic= tunnel_topic,
+        qos=mqtt.QoS.AT_LEAST_ONCE,
+        callback=on_message_received)
+    
     ssh_host = 'pi@127.0.0.1'
-
-            # Connect to the MQTT broker and subscribe to the topic
-            # ... (code to establish MQTT connection and subscribe to topic)
-
-            # Request the tunnel
-    command = input("Enter the command: ")
-    pi_id = input("Enter the pi_id: ")
-    request_tunnel(command, pi_id)  # Send the tunnel request
+    while True:
+        command = input("Enter the command: ")
+        pi_id = input("Enter the pi_id: ")
+        user = input("Enter username: ")
+        password = input("Enter password : ")
+        
+        if request_tunnel(command, pi_id, user,password):
+            break
+        
